@@ -1,98 +1,95 @@
-# vinext-starter
+# 炸鸡团 · 黑本记录册
 
-A clean full-stack starter running on
-[vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and
-Drizzle support.
+独立的副本掉落录入网页，字段结构兼容 `nonebot-plugin-kdocs-excel-summary` 使用的 Excel 记录表。
 
-## Prerequisites
+## 功能
 
-- Node.js `>=22.13.0`
+- 自动带出不同副本的六级、小铁、玄晶和特殊掉落上限
+- 录入黑本 ID、群友昵称、掉落数量、特殊掉落和备注
+- 自动校验掉落数量，避免超过副本上限
+- 浏览器本地保存、搜索、复用与删除记录
+- 导出与现有统计表兼容的 UTF-8 CSV
+- 响应式布局，支持电脑和手机
 
-## Quick Start
+> 当前记录保存在访问者浏览器的 `localStorage` 中。部署服务器不会集中保存成员数据；需要汇总时请使用页面中的“导出 CSV”。
+
+## Docker Compose 部署
+
+服务器需要安装 Docker Engine 和 Docker Compose 插件。
 
 ```bash
-npm install
+git clone https://github.com/kimjioo/fuben.git
+cd fuben
+docker compose up -d --build
+```
+
+部署完成后访问：
+
+```text
+http://服务器IP:8080
+```
+
+查看运行状态和日志：
+
+```bash
+docker compose ps
+docker compose logs -f fuben
+```
+
+更新到最新版本：
+
+```bash
+git pull
+docker compose up -d --build
+```
+
+停止服务：
+
+```bash
+docker compose down
+```
+
+## 修改访问端口
+
+默认使用宿主机 `8080` 端口。可以在启动前设置 `FUBEN_PORT`：
+
+```bash
+FUBEN_PORT=9000 docker compose up -d --build
+```
+
+或在项目目录创建 `.env`：
+
+```env
+FUBEN_PORT=9000
+```
+
+## 域名与 HTTPS
+
+生产环境建议在容器前使用 Nginx、Caddy、Traefik 或服务器面板提供的反向代理，将域名转发到：
+
+```text
+http://127.0.0.1:8080
+```
+
+反向代理启用 HTTPS 后，可以把 Compose 端口改成仅监听本机：
+
+```yaml
+ports:
+  - "127.0.0.1:8080:3000"
+```
+
+## 本地开发
+
+需要 Node.js 22.13 或更高版本：
+
+```bash
+npm ci
 npm run dev
+```
+
+生产构建：
+
+```bash
 npm run build
+npm run start
 ```
-
-This starter does not use `wrangler.jsonc`.
-
-## Included Shape
-
-- edit site code under `app/`
-- `.openai/hosting.json` declares optional Sites D1 and R2 bindings
-- `vite.config.ts` simulates declared bindings for local development
-- `db/schema.ts` starts intentionally empty
-- `examples/d1/` contains an optional D1 example surface
-- `drizzle.config.ts` supports local migration generation when needed
-
-## Workspace Auth Headers
-
-OpenAI workspace sites can read the current user's email from
-`oai-authenticated-user-email`.
-
-SIWC-authenticated workspace sites may also receive
-`oai-authenticated-user-full-name` when the user's SIWC profile has a non-empty
-`name` claim. The full-name value is percent-encoded UTF-8 and is accompanied by
-`oai-authenticated-user-full-name-encoding: percent-encoded-utf-8`.
-
-Treat the full name as optional and fall back to email when it is absent:
-
-```tsx
-import { headers } from "next/headers";
-
-export default async function Home() {
-  const requestHeaders = await headers();
-  const email = requestHeaders.get("oai-authenticated-user-email");
-  const encodedFullName = requestHeaders.get("oai-authenticated-user-full-name");
-  const fullName =
-    encodedFullName &&
-    requestHeaders.get("oai-authenticated-user-full-name-encoding") ===
-      "percent-encoded-utf-8"
-      ? decodeURIComponent(encodedFullName)
-      : null;
-
-  const displayName = fullName ?? email;
-  // ...
-}
-```
-
-## Optional Dispatch-Owned ChatGPT Sign-In
-
-Import the ready-to-use helpers from `app/chatgpt-auth.ts` when the site needs
-optional or required ChatGPT sign-in:
-
-- Use `getChatGPTUser()` for optional signed-in UI.
-- Use `requireChatGPTUser(returnTo)` for server-rendered pages that should send
-  anonymous visitors through Sign in with ChatGPT.
-- Use `chatGPTSignInPath(returnTo)` and `chatGPTSignOutPath(returnTo)` for
-  browser links or actions.
-- Pass a same-origin relative `returnTo` path for the destination after sign-in
-  or sign-out. The helper validates and safely encodes it.
-- Mark protected pages with `export const dynamic = "force-dynamic"` because
-  they depend on per-request identity headers.
-
-Dispatch owns `/signin-with-chatgpt`, `/signout-with-chatgpt`, `/callback`, the
-OAuth cookies, and identity header injection. Do not implement app routes for
-those reserved paths. Routes that do not import and call the helper remain
-anonymous-compatible.
-
-SIWC establishes identity only; it does not prove workspace membership. Use the
-Sites hosting platform's access policy controls for workspace-wide restrictions,
-or enforce explicit server-side membership or allowlist checks.
-
-Use SIWC for account pages, user-specific dashboards, saved records, and write
-actions tied to the current ChatGPT user. Leave public content anonymous.
-
-## Useful Commands
-
-- `npm run dev`: start local development
-- `npm run build`: verify the vinext build output
-- `npm test`: build the starter and verify its rendered loading skeleton
-- `npm run db:generate`: generate Drizzle migrations after schema changes
-
-## Learn More
-
-- [vinext Documentation](https://github.com/cloudflare/vinext)
-- [Drizzle D1 Guide](https://orm.drizzle.team/docs/get-started/d1-new)

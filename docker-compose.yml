@@ -1,0 +1,25 @@
+services:
+  fuben:
+    image: fuben-record-web:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fuben-record-web
+    restart: unless-stopped
+    ports:
+      - "${FUBEN_PORT:-8080}:3000"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
