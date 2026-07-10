@@ -47,6 +47,12 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .brand strong, .brand span { display: block; }
 .brand strong { font-size: 16px; letter-spacing: 3px; }
 .brand span { margin-top: 3px; color: var(--muted); font-size: 11px; letter-spacing: 2px; }
+.team-picker { padding: 20px 10px 0; }
+.team-picker > span { display: block; margin-bottom: 8px; color: #5f6570; font-size: 8px; letter-spacing: 1.4px; }
+.team-picker > div { display: grid; grid-template-columns: 1fr 34px; gap: 6px; }
+.team-picker select { height: 35px; padding: 0 8px; color: #d5d1ca; font-size: 10px; background: #171a21; border-color: #30343d; }
+.team-picker button { height: 35px; padding: 0; color: #d4b47d; background: #211c16; border: 1px solid #5c4b32; cursor: pointer; }
+.team-picker button:hover { color: #f0c883; border-color: #8b7048; background: #2a2118; }
 .sidebar nav { padding-top: 24px; display: grid; gap: 7px; }
 .sidebar nav a {
   color: #8f949f; text-decoration: none; border: 1px solid transparent;
@@ -192,6 +198,26 @@ footer p { margin: 0; }
 .toast span { width: 19px; height: 19px; display: grid; place-items: center; color: #8ec19a; border: 1px solid #5a7b62; border-radius: 50%; font-size: 8px; }
 @keyframes toast-in { from { transform: translateY(8px); opacity: 0; } }
 
+.modal-backdrop {
+  position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 20px;
+  background: rgba(6, 7, 10, .82); backdrop-filter: blur(8px); animation: fade-in .2s ease;
+}
+.team-modal {
+  width: min(430px, 100%); position: relative; padding: 36px 38px 32px; text-align: center;
+  background: #161920; border: 1px solid #3a3e48; box-shadow: 0 30px 100px rgba(0,0,0,.55);
+}
+.team-modal::before { content: ""; position: absolute; left: 0; top: 0; width: 100%; height: 2px; background: linear-gradient(90deg, transparent, #d6ad69, transparent); }
+.modal-close { position: absolute; right: 13px; top: 12px; width: 30px; height: 30px; padding: 0; color: #7c828d; background: transparent; border: 1px solid #343842; cursor: pointer; }
+.modal-close:hover { color: #d9b879; border-color: #6b5739; }
+.modal-mark { width: 49px; height: 49px; margin: 0 auto 18px; display: grid; place-items: center; color: #efc47d; background: #251e18; border: 1px solid #765e3d; font: 500 20px Georgia, serif; transform: rotate(-3deg); }
+.team-modal h2 { margin: 0; font: 500 27px/1.2 "STSong", "SimSun", serif; letter-spacing: 3px; }
+.team-modal > p:not(.eyebrow) { max-width: 330px; margin: 12px auto 24px; color: #777d88; font-size: 10px; line-height: 1.8; }
+.team-modal form { display: grid; gap: 13px; text-align: left; }
+.team-modal form button { height: 43px; color: #1b1711; background: #d5ae6c; border: 1px solid #d5ae6c; font-weight: 700; cursor: pointer; }
+.team-modal form button:hover { background: #e0bd80; }
+.team-modal > small { display: block; margin-top: 15px; color: #555b66; font-size: 8px; }
+@keyframes fade-in { from { opacity: 0; } }
+
 @media (max-width: 1050px) {
   .sidebar { width: 190px; }
   .workspace { width: calc(100% - 190px); margin-left: 190px; padding-inline: 24px; }
@@ -208,7 +234,11 @@ footer p { margin: 0; }
   .brand { border: 0; padding: 0; }
   .brand-mark { width: 34px; height: 34px; }
   .brand span { display: none; }
-  .sidebar nav { margin-left: auto; padding: 0; display: flex; }
+  .team-picker { width: 160px; margin-left: auto; padding: 0; }
+  .team-picker > span { display: none; }
+  .team-picker > div { grid-template-columns: 1fr 32px; }
+  .team-picker select, .team-picker button { height: 34px; }
+  .sidebar nav { margin-left: 8px; padding: 0; display: flex; }
   .sidebar nav a { padding: 9px 10px; font-size: 11px; }
   .sidebar nav a span, .sidebar nav a:nth-child(3) { display: none; }
   .sync-card, .sidebar-footer { display: none; }
@@ -243,6 +273,10 @@ footer p { margin: 0; }
 }
 
 @media (max-width: 440px) {
+  .brand > div:last-child { display: none; }
+  .team-picker { width: 155px; margin-left: 10px; }
+  .sidebar nav a { display: none; }
+  .sidebar nav a.active { display: block; }
   .today-card { display: none; }
   .topbar h1 { font-size: 30px; }
   .section-head .hint, .required-note { display: none; }
@@ -255,6 +289,7 @@ footer p { margin: 0; }
   .table-actions { margin-top: 13px; flex-direction: row; }
   .search-box { flex: 1; }
   .search-box input { width: 100%; }
+  .team-modal { padding: 32px 22px 27px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

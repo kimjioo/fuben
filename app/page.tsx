@@ -10,8 +10,15 @@ type DungeonRule = {
   special: number;
 };
 
+type Team = {
+  id: string;
+  name: string;
+  createdAt: string;
+};
+
 type RecordItem = {
   id: string;
+  teamId: string;
   date: string;
   characterId: string;
   nickname: string;
@@ -89,27 +96,61 @@ function Stepper({
 
 export default function Home() {
   const [form, setForm] = useState(emptyForm);
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [activeTeamId, setActiveTeamId] = useState("");
   const [records, setRecords] = useState<RecordItem[]>([]);
+  const [teamName, setTeamName] = useState("");
+  const [showTeamModal, setShowTeamModal] = useState(false);
   const [toast, setToast] = useState("");
   const [filter, setFilter] = useState("");
   const [showAll, setShowAll] = useState(false);
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
-    const stored = window.localStorage.getItem("blackbook-records-v1");
-    if (stored) {
+    const parse = <T,>(key: string, fallback: T): T => {
       try {
-        setRecords(JSON.parse(stored));
+        const value = window.localStorage.getItem(key);
+        return value ? JSON.parse(value) : fallback;
       } catch {
-        setRecords([]);
+        return fallback;
+      }
+    };
+
+    let nextTeams = parse<Team[]>("blackbook-teams-v1", []);
+    let nextRecords = parse<RecordItem[]>("blackbook-records-v2", []);
+    let nextActiveTeamId = window.localStorage.getItem("blackbook-active-team-v1") ?? "";
+
+    if (!nextTeams.length) {
+      const legacyRecords = parse<Omit<RecordItem, "teamId">[]>("blackbook-records-v1", []);
+      if (legacyRecords.length) {
+        const legacyTeam: Team = {
+          id: "team-zhajituan",
+          name: "炸鸡团",
+          createdAt: new Date().toISOString(),
+        };
+        nextTeams = [legacyTeam];
+        nextActiveTeamId = legacyTeam.id;
+        nextRecords = legacyRecords.map((record) => ({ ...record, teamId: legacyTeam.id }));
       }
     }
+
+    if (nextTeams.length && !nextTeams.some((team) => team.id === nextActiveTeamId)) {
+      nextActiveTeamId = nextTeams[0].id;
+    }
+
+    setTeams(nextTeams);
+    setRecords(nextRecords);
+    setActiveTeamId(nextActiveTeamId);
+    setShowTeamModal(nextTeams.length === 0);
     setHydrated(true);
   }, []);
 
   useEffect(() => {
-    if (hydrated) window.localStorage.setItem("blackbook-records-v1", JSON.stringify(records));
-  }, [records, hydrated]);
+    if (!hydrated) return;
+    window.localStorage.setItem("blackbook-teams-v1", JSON.stringify(teams));
+    window.localStorage.setItem("blackbook-records-v2", JSON.stringify(records));
+    window.localStorage.setItem("blackbook-active-team-v1", activeTeamId);
+  }, [teams, records, activeTeamId, hydrated]);
 
   useEffect(() => {
     if (!toast) return;
@@ -118,19 +159,24 @@ export default function Home() {
   }, [toast]);
 
   const activeRule = rules.find((rule) => rule.name === form.dungeon) ?? rules[0];
+  const activeTeam = teams.find((team) => team.id === activeTeamId) ?? null;
+  const activeRecords = useMemo(
+    () => records.filter((record) => record.teamId === activeTeamId),
+    [records, activeTeamId],
+  );
   const filteredRecords = useMemo(() => {
     const key = filter.trim().toLowerCase();
     const list = key
-      ? records.filter((item) =>
+      ? activeRecords.filter((item) =>
           [item.nickname, item.characterId, item.dungeon, item.special].some((value) =>
             value.toLowerCase().includes(key),
           ),
         )
-      : records;
+      : activeRecords;
     return showAll ? list : list.slice(0, 4);
-  }, [records, filter, showAll]);
+  }, [activeRecords, filter, showAll]);
 
-  const todayRecords = records.filter((record) => record.date === today);
+  const todayRecords = activeRecords.filter((record) => record.date === today);
   const todayDrops = todayRecords.reduce(
     (total, record) => total + record.six + record.iron + record.crystal + record.specialCount,
     0,
@@ -142,6 +188,11 @@ export default function Home() {
 
   function submit(event: FormEvent) {
     event.preventDefault();
+    if (!activeTeam) {
+      setShowTeamModal(true);
+      setToast("请先创建或选择一个团队");
+      return;
+    }
     if (!form.characterId.trim() || !form.nickname.trim()) {
       setToast("请先填写黑本 ID 和群友昵称");
       return;
@@ -159,6 +210,7 @@ export default function Home() {
     const now = new Date();
     const next: RecordItem = {
       ...form,
+      teamId: activeTeam.id,
       characterId: form.characterId.trim(),
       nickname: form.nickname.trim(),
       special: form.special.trim(),
@@ -168,6 +220,36 @@ export default function Home() {
     setRecords((current) => [next, ...current]);
     setForm((current) => ({ ...emptyForm, date: current.date, characterId: current.characterId, nickname: current.nickname, dungeon: current.dungeon }));
     setToast("记录已保存到本机");
+  }
+
+  function createTeam(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const name = teamName.trim();
+    if (!name) return;
+    if (teams.some((team) => team.name.toLowerCase() === name.toLowerCase())) {
+      setToast("已经存在同名团队");
+      return;
+    }
+
+    const team: Team = {
+      id: `team-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      name,
+      createdAt: new Date().toISOString(),
+    };
+    setTeams((current) => [...current, team]);
+    setActiveTeamId(team.id);
+    setFilter("");
+    setShowAll(false);
+    setTeamName("");
+    setShowTeamModal(false);
+    setToast(`已创建团队“${name}”`);
+  }
+
+  function switchTeam(teamId: string) {
+    setActiveTeamId(teamId);
+    setFilter("");
+    setShowAll(false);
+    setToast(`已切换到“${teams.find((team) => team.id === teamId)?.name ?? "团队"}”`);
   }
 
   function duplicate(record: RecordItem) {
@@ -210,7 +292,7 @@ export default function Home() {
       "备注",
     ];
     const escape = (value: string | number) => `"${String(value).replaceAll('"', '""')}"`;
-    const rows = records.map((record) => {
+    const rows = activeRecords.map((record) => {
       const rule = rules.find((item) => item.name === record.dungeon) ?? rules[0];
       const specials = [record.crystal ? "玄晶" : "", record.special].filter(Boolean).join(" / ");
       return [
@@ -236,20 +318,36 @@ export default function Home() {
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = `炸鸡团黑本记录-${today}.csv`;
+    const safeTeamName = (activeTeam?.name ?? "团队").replace(/[\\/:*?"<>|]/g, "-");
+    anchor.download = `${safeTeamName}-黑本记录-${today}.csv`;
     anchor.click();
     URL.revokeObjectURL(url);
-    setToast(`已导出 ${records.length} 条记录`);
+    setToast(`已导出 ${activeRecords.length} 条记录`);
   }
 
   return (
     <main className="shell">
       <aside className="sidebar">
         <div className="brand">
-          <div className="brand-mark">炸</div>
+          <div className="brand-mark">{activeTeam?.name.slice(0, 1) ?? "团"}</div>
           <div>
-            <strong>炸鸡团</strong>
+            <strong>{activeTeam?.name ?? "副本团队"}</strong>
             <span>黑本记录册</span>
+          </div>
+        </div>
+        <div className="team-picker">
+          <span>当前团队</span>
+          <div>
+            <select
+              aria-label="切换团队"
+              value={activeTeamId}
+              onChange={(event) => switchTeam(event.target.value)}
+              disabled={!teams.length}
+            >
+              {!teams.length && <option value="">尚未创建团队</option>}
+              {teams.map((team) => <option value={team.id} key={team.id}>{team.name}</option>)}
+            </select>
+            <button type="button" onClick={() => setShowTeamModal(true)} aria-label="创建新团队" title="创建新团队">＋</button>
           </div>
         </div>
         <nav aria-label="主导航">
@@ -259,7 +357,7 @@ export default function Home() {
         </nav>
         <div className="sync-card">
           <span className="status-dot" />
-          <div><strong>本机记录模式</strong><small>数据仅保存在当前浏览器</small></div>
+          <div><strong>{activeTeam?.name ?? "等待创建团队"}</strong><small>团队数据保存在当前浏览器</small></div>
         </div>
         <div className="sidebar-footer">数据结构兼容现有 Excel 统计</div>
       </aside>
@@ -267,9 +365,9 @@ export default function Home() {
       <section className="workspace">
         <header className="topbar">
           <div>
-            <p className="eyebrow">DUNGEON LOG · 2026</p>
+            <p className="eyebrow">{activeTeam?.name ?? "CREATE YOUR TEAM"} · DUNGEON LOG</p>
             <h1>副本记录录入</h1>
-            <p>把每一次黑本掉落，记得清清楚楚。</p>
+            <p>{activeTeam ? `正在记录“${activeTeam.name}”的每一次黑本掉落。` : "创建团名后即可开始记录。"}</p>
           </div>
           <div className="today-card">
             <div><span>今日记录</span><strong>{todayRecords.length}</strong></div>
@@ -391,15 +489,44 @@ export default function Home() {
             ))}
             {!filteredRecords.length && <div className="empty-state">没有找到匹配的记录</div>}
           </div>
-          {records.length > 4 && !filter && (
+          {activeRecords.length > 4 && !filter && (
             <button className="show-more" type="button" onClick={() => setShowAll((value) => !value)}>
-              {showAll ? "收起记录" : `查看全部 ${records.length} 条记录`}
+              {showAll ? "收起记录" : `查看全部 ${activeRecords.length} 条记录`}
             </button>
           )}
         </section>
 
-        <footer><span>炸鸡团黑本记录册</span><p>本页为独立录入副本 · 字段结构兼容现有统计插件</p></footer>
+        <footer><span>{activeTeam?.name ?? "团队"}黑本记录册</span><p>多团队独立记录 · 字段结构兼容现有统计插件</p></footer>
       </section>
+
+      {hydrated && showTeamModal && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="team-modal" role="dialog" aria-modal="true" aria-labelledby="team-modal-title">
+            {teams.length > 0 && (
+              <button className="modal-close" type="button" onClick={() => setShowTeamModal(false)} aria-label="关闭">×</button>
+            )}
+            <div className="modal-mark">团</div>
+            <p className="eyebrow">CREATE A TEAM</p>
+            <h2 id="team-modal-title">创建你的团队</h2>
+            <p>输入团名后，这个团队会拥有独立的副本记录、今日统计和 CSV 文件。</p>
+            <form onSubmit={createTeam}>
+              <label>
+                <span>团队名称 <b>*</b></span>
+                <input
+                  autoFocus
+                  value={teamName}
+                  onChange={(event) => setTeamName(event.target.value)}
+                  placeholder="例如：炸鸡团、周末十人团"
+                  maxLength={30}
+                  required
+                />
+              </label>
+              <button className="primary" type="submit">创建并开始记录</button>
+            </form>
+            <small>记录保存在当前浏览器，不同团队的数据不会混在一起。</small>
+          </section>
+        </div>
+      )}
 
       {toast && <div className="toast" role="status"><span>✓</span>{toast}</div>}
     </main>
