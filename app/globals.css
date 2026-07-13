@@ -25,7 +25,20 @@ body {
 button, input, select, textarea { font: inherit; }
 button, a { -webkit-tap-highlight-color: transparent; }
 
-.shell { min-height: 100vh; display: flex; }
+.shell { min-height: 100vh; display: flex; position: relative; isolation: isolate; }
+.wallpaper-layer,
+.wallpaper-shade { position: fixed; inset: 0; pointer-events: none; }
+.wallpaper-layer {
+  z-index: -2; opacity: 0; background-position: center; background-repeat: no-repeat; background-size: cover;
+  filter: saturate(.82) contrast(.94); transform: scale(1.015); transition: opacity .7s ease;
+}
+.wallpaper-layer.is-ready { opacity: .58; }
+.wallpaper-shade {
+  z-index: -1;
+  background:
+    linear-gradient(90deg, rgba(7,9,13,.97) 0, rgba(8,10,15,.88) 18%, rgba(8,10,15,.65) 52%, rgba(8,10,15,.78) 100%),
+    linear-gradient(180deg, rgba(8,10,15,.28), rgba(8,10,15,.74));
+}
 .sidebar {
   width: 232px;
   height: 100vh;
@@ -190,9 +203,13 @@ input[type="date"] { color-scheme: dark; }
 .empty-state { padding: 35px; text-align: center; color: #666c76; background: #14171e; border-bottom: 1px solid #292d35; font-size: 11px; }
 .show-more { width: 100%; padding: 11px; color: #6e747f; background: #11141a; border: 1px solid #292d35; border-top: 0; cursor: pointer; font-size: 9px; letter-spacing: 1px; }
 .show-more:hover { color: #d2b071; }
-footer { max-width: 1180px; margin: 28px auto 0; display: flex; justify-content: space-between; color: #4f545e; font-size: 9px; }
+footer { max-width: 1180px; margin: 28px auto 0; display: flex; justify-content: space-between; align-items: center; gap: 18px; color: #676d77; font-size: 9px; }
 footer span { letter-spacing: 2px; }
 footer p { margin: 0; }
+.wallpaper-credit { margin-left: auto; white-space: nowrap; }
+.wallpaper-credit a { color: #80745f; text-decoration: none; }
+.wallpaper-credit a:hover { color: #d6ad69; }
+.wallpaper-credit i { margin: 0 5px; color: #4f545e; font-style: normal; }
 
 .toast { position: fixed; z-index: 99; right: 26px; bottom: 26px; display: flex; align-items: center; gap: 10px; padding: 13px 17px; color: #dedbd4; background: #20242c; border: 1px solid #4d5360; box-shadow: 0 12px 40px rgba(0,0,0,.4); font-size: 11px; animation: toast-in .25s ease; }
 .toast span { width: 19px; height: 19px; display: grid; place-items: center; color: #8ec19a; border: 1px solid #5a7b62; border-radius: 50%; font-size: 8px; }

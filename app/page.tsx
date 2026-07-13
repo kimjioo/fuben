@@ -47,6 +47,21 @@ const rules: DungeonRule[] = [
   { name: "敖龙岛", six: 12, iron: 0, crystal: 2, special: 6 },
 ];
 
+const wallpapers = [
+  "/wallpapers/jx3box-5651-01.webp",
+  "/wallpapers/jx3box-5651-02.webp",
+  "/wallpapers/jx3box-5651-03.webp",
+  "/wallpapers/jx3box-5651-04.webp",
+  "/wallpapers/jx3box-5651-05.webp",
+  "/wallpapers/jx3box-5651-06.webp",
+  "/wallpapers/jx3box-2249-01.webp",
+  "/wallpapers/jx3box-2249-02.webp",
+  "/wallpapers/jx3box-2249-03.webp",
+  "/wallpapers/jx3box-2249-04.webp",
+  "/wallpapers/jx3box-2249-05.webp",
+  "/wallpapers/jx3box-2249-06.webp",
+];
+
 const today = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
 const emptyForm = {
@@ -96,6 +111,7 @@ function Stepper({
 
 export default function Home() {
   const [form, setForm] = useState(emptyForm);
+  const [wallpaper, setWallpaper] = useState("");
   const [teams, setTeams] = useState<Team[]>([]);
   const [activeTeamId, setActiveTeamId] = useState("");
   const [records, setRecords] = useState<RecordItem[]>([]);
@@ -105,6 +121,10 @@ export default function Home() {
   const [filter, setFilter] = useState("");
   const [showAll, setShowAll] = useState(false);
   const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    setWallpaper(wallpapers[Math.floor(Math.random() * wallpapers.length)]);
+  }, []);
 
   useEffect(() => {
     const parse = <T,>(key: string, fallback: T): T => {
@@ -327,6 +347,12 @@ export default function Home() {
 
   return (
     <main className="shell">
+      <div
+        className={`wallpaper-layer ${wallpaper ? "is-ready" : ""}`}
+        style={wallpaper ? { backgroundImage: `url(${wallpaper})` } : undefined}
+        aria-hidden="true"
+      />
+      <div className="wallpaper-shade" aria-hidden="true" />
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-mark">{activeTeam?.name.slice(0, 1) ?? "团"}</div>
@@ -496,7 +522,16 @@ export default function Home() {
           )}
         </section>
 
-        <footer><span>{activeTeam?.name ?? "团队"}黑本记录册</span><p>多团队独立记录 · 字段结构兼容现有统计插件</p></footer>
+        <footer>
+          <span>{activeTeam?.name ?? "团队"}黑本记录册</span>
+          <p>多团队独立记录 · 字段结构兼容现有统计插件</p>
+          <p className="wallpaper-credit">
+            壁纸来源：
+            <a href="https://www.jx3box.com/community/5651?page=1&onlyAuthor=false" target="_blank" rel="noreferrer">JX3BOX 第一期</a>
+            <i>·</i>
+            <a href="https://www.jx3box.com/community/2249?page=1&onlyAuthor=false" target="_blank" rel="noreferrer">JX3BOX 合集</a>
+          </p>
+        </footer>
       </section>
 
       {hydrated && showTeamModal && (
