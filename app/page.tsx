@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 type DungeonRule = {
   name: string;
@@ -30,6 +30,13 @@ type RecordItem = {
   specialCount: number;
   note: string;
   createdAt: string;
+};
+
+type BackupStatus = "checking" | "local" | "syncing" | "synced" | "error";
+
+type RemoteState = {
+  team: Team & { updatedAt?: string };
+  records: RecordItem[];
 };
 
 const rules: DungeonRule[] = [
@@ -115,12 +122,20 @@ export default function Home() {
   const [teams, setTeams] = useState<Team[]>([]);
   const [activeTeamId, setActiveTeamId] = useState("");
   const [records, setRecords] = useState<RecordItem[]>([]);
+  const [backupKeys, setBackupKeys] = useState<Record<string, string>>({});
+  const [backupAvailable, setBackupAvailable] = useState(false);
+  const [backupStatus, setBackupStatus] = useState<BackupStatus>("checking");
+  const [showBackupModal, setShowBackupModal] = useState(false);
+  const [recoveryCode, setRecoveryCode] = useState("");
+  const [restoring, setRestoring] = useState(false);
   const [teamName, setTeamName] = useState("");
   const [showTeamModal, setShowTeamModal] = useState(false);
   const [toast, setToast] = useState("");
   const [filter, setFilter] = useState("");
   const [showAll, setShowAll] = useState(false);
   const [hydrated, setHydrated] = useState(false);
+  const initializedBackups = useRef(new Set<string>());
+  const backupKeysRef = useRef<Record<string, string>>({});
 
   useEffect(() => {
     setWallpaper(wallpapers[Math.floor(Math.random() * wallpapers.length)]);
@@ -138,6 +153,7 @@ export default function Home() {
 
     let nextTeams = parse<Team[]>("blackbook-teams-v1", []);
     let nextRecords = parse<RecordItem[]>("blackbook-records-v2", []);
+    const nextBackupKeys = parse<Record<string, string>>("blackbook-team-backup-keys-v1", {});
     let nextActiveTeamId = window.localStorage.getItem("blackbook-active-team-v1") ?? "";
 
     if (!nextTeams.length) {
@@ -160,6 +176,8 @@ export default function Home() {
 
     setTeams(nextTeams);
     setRecords(nextRecords);
+    setBackupKeys(nextBackupKeys);
+    backupKeysRef.current = nextBackupKeys;
     setActiveTeamId(nextActiveTeamId);
     setShowTeamModal(nextTeams.length === 0);
     setHydrated(true);
@@ -170,7 +188,34 @@ export default function Home() {
     window.localStorage.setItem("blackbook-teams-v1", JSON.stringify(teams));
     window.localStorage.setItem("blackbook-records-v2", JSON.stringify(records));
     window.localStorage.setItem("blackbook-active-team-v1", activeTeamId);
-  }, [teams, records, activeTeamId, hydrated]);
+    window.localStorage.setItem("blackbook-team-backup-keys-v1", JSON.stringify(backupKeys));
+    backupKeysRef.current = backupKeys;
+  }, [teams, records, activeTeamId, backupKeys, hydrated]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    let cancelled = false;
+    fetch("/api/health", { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok || !response.headers.get("content-type")?.includes("application/json")) {
+          throw new Error("backup unavailable");
+        }
+        const data = await response.json();
+        if (!cancelled && data?.ok && data?.storage === "sqlite") {
+          setBackupAvailable(true);
+          setBackupStatus("local");
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setBackupAvailable(false);
+          setBackupStatus("local");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [hydrated]);
 
   useEffect(() => {
     if (!toast) return;
@@ -184,6 +229,9 @@ export default function Home() {
     () => records.filter((record) => record.teamId === activeTeamId),
     [records, activeTeamId],
   );
+  const activeRecoveryCode = activeTeam && backupKeys[activeTeam.id]
+    ? `${activeTeam.id}.${backupKeys[activeTeam.id]}`
+    : "";
   const filteredRecords = useMemo(() => {
     const key = filter.trim().toLowerCase();
     const list = key
@@ -201,6 +249,142 @@ export default function Home() {
     (total, record) => total + record.six + record.iron + record.crystal + record.specialCount,
     0,
   );
+
+  useEffect(() => {
+    if (!hydrated || !backupAvailable || !activeTeam || initializedBackups.current.has(activeTeam.id)) {
+      return;
+    }
+    initializedBackups.current.add(activeTeam.id);
+    void syncTeamToVps(activeTeam, activeRecords).catch(() => {
+      initializedBackups.current.delete(activeTeam.id);
+    });
+  }, [hydrated, backupAvailable, activeTeamId]);
+
+  function newBackupSecret(): string {
+    const bytes = new Uint8Array(24);
+    window.crypto.getRandomValues(bytes);
+    return btoa(String.fromCharCode(...bytes))
+      .replaceAll("+", "-")
+      .replaceAll("/", "_")
+      .replaceAll("=", "");
+  }
+
+  async function backupRequest(path: string, options: RequestInit = {}) {
+    const response = await fetch(`/api${path}`, {
+      ...options,
+      cache: "no-store",
+      headers: {
+        "Content-Type": "application/json",
+        ...(options.headers ?? {}),
+      },
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data?.error || "VPS 备份失败");
+    return data;
+  }
+
+  async function ensureRemoteTeam(team: Team): Promise<string> {
+    let secret = backupKeysRef.current[team.id];
+    if (!secret) {
+      secret = newBackupSecret();
+      backupKeysRef.current = { ...backupKeysRef.current, [team.id]: secret };
+      setBackupKeys((current) => ({ ...current, [team.id]: secret }));
+    }
+    await backupRequest(`/teams/${encodeURIComponent(team.id)}`, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${secret}` },
+      body: JSON.stringify({ name: team.name }),
+    });
+    return secret;
+  }
+
+  async function syncTeamToVps(team: Team, localRecords: RecordItem[]) {
+    if (!backupAvailable) return;
+    setBackupStatus("syncing");
+    try {
+      const secret = await ensureRemoteTeam(team);
+      await backupRequest(`/teams/${encodeURIComponent(team.id)}/state`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${secret}` },
+        body: JSON.stringify({ records: localRecords }),
+      });
+      const remote = await backupRequest(`/teams/${encodeURIComponent(team.id)}/state`, {
+        headers: { Authorization: `Bearer ${secret}` },
+      }) as RemoteState;
+      const merged = new Map<string, RecordItem>();
+      for (const record of remote.records) merged.set(record.id, record);
+      for (const record of localRecords) merged.set(record.id, record);
+      const mergedRecords = Array.from(merged.values()).sort((a, b) => b.id.localeCompare(a.id));
+      setRecords((current) => [
+        ...mergedRecords,
+        ...current.filter((record) => record.teamId !== team.id),
+      ]);
+      setBackupStatus("synced");
+    } catch (error) {
+      setBackupStatus("error");
+      setToast(error instanceof Error ? error.message : "VPS 备份失败，本地记录仍已保存");
+      throw error;
+    }
+  }
+
+  async function deleteRecordFromVps(team: Team, recordId: string) {
+    if (!backupAvailable) return;
+    setBackupStatus("syncing");
+    try {
+      const secret = await ensureRemoteTeam(team);
+      await backupRequest(`/teams/${encodeURIComponent(team.id)}/records/${encodeURIComponent(recordId)}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${secret}` },
+      });
+      setBackupStatus("synced");
+    } catch (error) {
+      setBackupStatus("error");
+      setToast(error instanceof Error ? error.message : "VPS 删除同步失败");
+    }
+  }
+
+  async function restoreFromVps(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const code = recoveryCode.trim();
+    if (!code || !backupAvailable) return;
+    setRestoring(true);
+    try {
+      const remote = await backupRequest("/restore", {
+        method: "POST",
+        body: JSON.stringify({ recoveryCode: code }),
+      }) as RemoteState;
+      const separator = code.indexOf(".");
+      const secret = code.slice(separator + 1);
+      setTeams((current) => [remote.team, ...current.filter((team) => team.id !== remote.team.id)]);
+      setRecords((current) => [
+        ...remote.records,
+        ...current.filter((record) => record.teamId !== remote.team.id),
+      ]);
+      backupKeysRef.current = { ...backupKeysRef.current, [remote.team.id]: secret };
+      setBackupKeys((current) => ({ ...current, [remote.team.id]: secret }));
+      setActiveTeamId(remote.team.id);
+      initializedBackups.current.add(remote.team.id);
+      setRecoveryCode("");
+      setShowBackupModal(false);
+      setShowTeamModal(false);
+      setBackupStatus("synced");
+      setToast(`已从 VPS 恢复“${remote.team.name}”及 ${remote.records.length} 条记录`);
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "恢复失败，请检查备份码");
+    } finally {
+      setRestoring(false);
+    }
+  }
+
+  async function copyRecoveryCode() {
+    if (!activeRecoveryCode) return;
+    try {
+      await navigator.clipboard.writeText(activeRecoveryCode);
+      setToast("团队备份码已复制，请妥善保管");
+    } catch {
+      setToast("浏览器无法自动复制，请手动选择备份码");
+    }
+  }
 
   function update<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
     setForm((current) => ({ ...current, [key]: value }));
@@ -239,7 +423,8 @@ export default function Home() {
     };
     setRecords((current) => [next, ...current]);
     setForm((current) => ({ ...emptyForm, date: current.date, characterId: current.characterId, nickname: current.nickname, dungeon: current.dungeon }));
-    setToast("记录已保存到本机");
+    setToast(backupAvailable ? "记录已保存，正在备份到 VPS" : "记录已保存到本机");
+    void syncTeamToVps(activeTeam, [next, ...activeRecords]);
   }
 
   function createTeam(event: FormEvent<HTMLFormElement>) {
@@ -263,6 +448,7 @@ export default function Home() {
     setTeamName("");
     setShowTeamModal(false);
     setToast(`已创建团队“${name}”`);
+    if (backupAvailable) void syncTeamToVps(team, []);
   }
 
   function switchTeam(teamId: string) {
@@ -292,6 +478,7 @@ export default function Home() {
   function remove(id: string) {
     setRecords((current) => current.filter((item) => item.id !== id));
     setToast("记录已删除");
+    if (activeTeam) void deleteRecordFromVps(activeTeam, id);
   }
 
   function exportCsv() {
@@ -345,6 +532,21 @@ export default function Home() {
     setToast(`已导出 ${activeRecords.length} 条记录`);
   }
 
+  const backupLabel = !backupAvailable
+    ? "本机记录模式"
+    : backupStatus === "syncing"
+      ? "正在备份到 VPS"
+      : backupStatus === "error"
+        ? "VPS 备份异常"
+        : backupStatus === "synced"
+          ? "VPS 已安全备份"
+          : "VPS 备份已连接";
+  const backupDetail = !backupAvailable
+    ? "Docker 部署后自动启用云备份"
+    : activeRecoveryCode
+      ? "点击查看团队备份码"
+      : "正在为团队建立备份";
+
   return (
     <main className="shell">
       <div
@@ -381,10 +583,17 @@ export default function Home() {
           <a href="#recent"><span>◷</span> 最近记录</a>
           <a href="#rules"><span>◇</span> 掉落规则</a>
         </nav>
-        <div className="sync-card">
+        <button
+          className={`sync-card backup-${backupStatus}`}
+          type="button"
+          onClick={() => {
+            setShowTeamModal(false);
+            setShowBackupModal(true);
+          }}
+        >
           <span className="status-dot" />
-          <div><strong>{activeTeam?.name ?? "等待创建团队"}</strong><small>团队数据保存在当前浏览器</small></div>
-        </div>
+          <div><strong>{backupLabel}</strong><small>{backupDetail}</small></div>
+        </button>
         <div className="sidebar-footer">数据结构兼容现有 Excel 统计</div>
       </aside>
 
@@ -479,7 +688,7 @@ export default function Home() {
 
           <div className="form-actions">
             <button className="secondary" type="button" onClick={() => setForm(emptyForm)}>清空本次</button>
-            <div className="save-note"><span>✓</span><div><strong>自动保存在当前浏览器</strong><small>导出后可直接合并到统计表</small></div></div>
+            <div className="save-note"><span>✓</span><div><strong>{backupAvailable ? "本机与 VPS 双重保存" : "自动保存在当前浏览器"}</strong><small>{backupAvailable ? "断网时本地记录仍然保留" : "Docker 部署后可启用 VPS 备份"}</small></div></div>
             <button className="primary" type="submit"><span>＋</span> 加入副本记录</button>
           </div>
         </form>
@@ -558,7 +767,72 @@ export default function Home() {
               </label>
               <button className="primary" type="submit">创建并开始记录</button>
             </form>
-            <small>记录保存在当前浏览器，不同团队的数据不会混在一起。</small>
+            {backupAvailable && (
+              <button
+                className="restore-link"
+                type="button"
+                onClick={() => {
+                  setShowTeamModal(false);
+                  setShowBackupModal(true);
+                }}
+              >
+                已有团队备份码？从 VPS 恢复
+              </button>
+            )}
+            <small>{backupAvailable ? "创建后会同时保存到浏览器和 VPS。" : "记录保存在当前浏览器，不同团队的数据不会混在一起。"}</small>
+          </section>
+        </div>
+      )}
+
+      {hydrated && showBackupModal && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="team-modal backup-modal" role="dialog" aria-modal="true" aria-labelledby="backup-modal-title">
+            <button
+              className="modal-close"
+              type="button"
+              onClick={() => {
+                setShowBackupModal(false);
+                if (!teams.length) setShowTeamModal(true);
+              }}
+              aria-label="关闭"
+            >×</button>
+            <div className="modal-mark">备</div>
+            <p className="eyebrow">VPS BACKUP</p>
+            <h2 id="backup-modal-title">团队云端备份</h2>
+            <p>{backupAvailable ? "记录会同时写入浏览器与 VPS 的 SQLite 数据库。" : "当前环境没有连接到 VPS 备份服务，记录仍安全保存在本机。"}</p>
+
+            {backupAvailable && activeTeam && activeRecoveryCode && (
+              <div className="recovery-box">
+                <span>{activeTeam.name} · 团队备份码</span>
+                <code>{activeRecoveryCode}</code>
+                <button type="button" onClick={copyRecoveryCode}>复制备份码</button>
+                <small>本地资料丢失后，需要此备份码从 VPS 恢复。请存放在密码管理器中。</small>
+              </div>
+            )}
+
+            {backupAvailable && activeTeam && !activeRecoveryCode && (
+              <button className="manual-sync" type="button" onClick={() => void syncTeamToVps(activeTeam, activeRecords)}>
+                立即建立 VPS 备份
+              </button>
+            )}
+
+            {backupAvailable && (
+              <form className="restore-form" onSubmit={restoreFromVps}>
+                <label>
+                  <span>使用备份码恢复团队</span>
+                  <textarea
+                    value={recoveryCode}
+                    onChange={(event) => setRecoveryCode(event.target.value)}
+                    placeholder="粘贴 team-… 开头的完整备份码"
+                    rows={3}
+                    required
+                  />
+                </label>
+                <button className="primary" type="submit" disabled={restoring}>
+                  {restoring ? "正在恢复…" : "从 VPS 恢复团队资料"}
+                </button>
+              </form>
+            )}
           </section>
         </div>
       )}
